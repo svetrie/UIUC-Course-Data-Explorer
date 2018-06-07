@@ -1,0 +1,261 @@
+---
+title: "UIUC Course Data Analysis"
+author: "Vetrie Senthilkumar"
+date: "May 17, 2018"
+output: html_document
+---
+
+```{r}
+library(dplyr)
+library(stringr)
+library(ggplot2)
+library(magrittr)
+
+```
+
+```{r}
+course_data = read.csv("UIUC Datasets/gpa/uiuc-gpa-dataset.csv")
+gen_eds = read.csv("UIUC Datasets/geneds/geneds-dataset.csv")
+```
+
+Prepare data for analysis by calculating Average GPA and Student Enrollment for classes using the grade distribution as well as making some other minor adjustments
+```{r}
+names(course_data)[7:20] = c("A+", "A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D+", "D", "D-", "F", "W")
+
+course_data$Course_Number = paste(course_data$Subject, course_data$Number)
+
+
+#Finds total num of students per class by computing sum of grade distributions
+course_data$students_enrolled = apply(course_data[, 7:20], MARGIN = 1, sum)
+
+#Calculates average GPA per class using U of I's GPA weighting system
+course_data$Average_GPA = (4 * (course_data$`A+`) + 4 * (course_data$A) + 3.67 * (course_data$`A-`) + 3.33 * (course_data$`B+`) + 3 * (course_data$B) + 2.67 * (course_data$`B-`) + 2.33 * (course_data$`C+`) + 2 * (course_data$C) + 1.67 * (course_data$`C-`) + 1.33 * (course_data$`D+`) + 1 * (course_data$D) + .67 * (course_data$`D-`)) / (course_data$students_enrolled - course_data$W)
+
+course_data$Average_GPA = round(course_data$Average_GPA, 2)
+course_data$Course.Title = as.character(course_data$Course.Title)
+```
+
+Function that accepts a list of courses and returns a dataframe containing the average GPA for those courses
+```{r}
+
+computeAvgGpa = function(courses) {
+  average_gpas = vector()
+  
+  for (i in 1 : length(courses)) {
+    selected_course = course_data %>% subset(Course.Title == courses[i])
+    avg_grade = sum(selected_course$Average_GPA * selected_course$students_enrolled) / sum(selected_course$students_enrolled)
+    average_gpas = c(average_gpas, avg_grade)
+  }
+  
+  average_gpas = round(average_gpas, 2)
+  course_gpas = data.frame(courses, average_gpas)
+  course_gpas = arrange(course_gpas, desc(average_gpas))
+  
+  return(course_gpas)
+}
+```
+
+
+10 classes with the largest student enrollments over the past 7 years
+```{r}
+unique_courses = unique(as.character(course_data$Course.Title))
+
+enrollments = vector(mode = "numeric")
+
+for (i in 1 : length(unique_courses)) {
+   num_students = course_data %>% subset(Course.Title == unique_courses[i]) %>% select(students_enrolled) %>% sum()
+   enrollments = c(enrollments, num_students)
+ }
+
+course_enrollments = data.frame(unique_courses, enrollments)
+course_enrollments = arrange(course_enrollments, desc(enrollments))
+
+ggplot(head(course_enrollments, 10), aes(x = unique_courses, y = enrollments, fill = enrollments)) +
+  geom_bar(stat = "identity") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(title = "Classes with Largest Student Enrollments over Past 7 Years", x = "Course Title", y = "Student Enrollment")
+  
+```
+
+10 Classes with the lowest average GPA over the past 7 years
+
+```{r}
+courses_gpas = computeAvgGpa(unique_courses)
+
+tail(courses_gpas, 10)
+ggplot(data = tail(courses_gpas, 10), aes(x = courses, y = average_gpas)) +
+  geom_bar(stat = "identity", fill = "red") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  scale_y_continuous(breaks = seq(1, 4, by = .5), limits = c(0,4))
+
+```
+
+The following classes all have average GPAs greater than 3.95
+
+```{r}
+courses_gpas %>% subset(average_gpas > 3.95) %>% select(courses)
+```
+
+
+10 majors that have the lowest average GPA for their classes and 10 majors with highest average GPA for their classes. 
+(*NOTE - This analysis does not take a class's enrollment numbers into account when calculating its impact on the major's overall average class GPA. Thus, the results could be skewed by majors with extremely difficult classes that are only taken by a few students. Such a situation would cause this analysis to imply that the major is more difficult than it really is for the majority of its students who opt not to take those challenging courses) 
+
+```{r}
+unique_majors = unique(course_data$Subject) %>% as.character()
+major_grades = vector(mode = "numeric")
+
+for (i in 1 : length(unique_majors)) {
+  avg_grade = course_data %>% subset(Subject == unique_majors[i]) %>% select(Average_GPA) %>% colMeans()
+  major_grades = c(major_grades, avg_grade)
+}
+
+major_gpas = data.frame(unique_majors, major_grades)
+major_gpas = arrange(major_gpas, desc(major_grades))
+
+head(major_gpas, 10)
+print("\n")
+ggplot(data = head(major_gpas, 10), aes(x = unique_majors, y = major_grades)) +
+  geom_bar(stat = "identity", fill = "dark green") +
+  scale_y_continuous(breaks = seq(0, 4, by = .25)) +
+  labs(title = "Majors With Highest Average Class GPAs", x = "Major", y = "Average Class GPA")
+  
+tail(major_gpas, 10)
+ggplot(data = tail(major_gpas, 10), aes(x = unique_majors, y = major_grades)) +
+  geom_bar(stat = "identity", fill = "red") +
+  scale_y_continuous(breaks = seq(0, 4, by = .25), limits = c(0,4)) +
+  labs(title = "Majors with Lowest Average Class GPAs", x = "Major", y = "Average Class GPA")
+
+
+```
+
+
+10 majors that have the lowest average WEIGHTED GPA for their classes and the 10 majors that have the highest average WEIGHTED GPA for their classes. Weighted GPA takes into account a class's enrollemnt numbers. Therefore, the impact of a class on a major's weighted GPA is proportional to the number of students enrolled in that class.
+
+```{r}
+weighted_grades = vector(mode = "numeric")
+
+for (i in 1 : length(unique_majors)) {
+  subject_subset = course_data %>% subset(Subject == unique_majors[i])
+  avg_grade = sum(subject_subset$Average_GPA * subject_subset$students_enrolled) / sum(subject_subset$students_enrolled)
+  weighted_grades = c(weighted_grades, avg_grade)
+}
+
+weighted_grades = round(weighted_grades, 2)
+weighted_major_gpas = data.frame(unique_majors, weighted_grades)
+weighted_major_gpas = arrange(weighted_major_gpas, desc(weighted_grades))
+
+head(weighted_major_gpas, 10)
+print("\n")
+ggplot(head(weighted_major_gpas, 10), aes(x = unique_majors, y = weighted_grades)) +
+  geom_bar(stat = "identity", fill = "dark green") +
+  scale_y_continuous(breaks = seq(1,4, by = .25)) +
+  labs(title = "Majors with Highest Weighted GPAs", x = "Major", y = "Weighted GPA")
+
+tail(weighted_major_gpas, 10)
+ggplot(tail(weighted_major_gpas, 10), aes(x = unique_majors, y = weighted_grades)) +
+  geom_bar(stat = "identity", fill = "red") +
+  scale_y_continuous(breaks = seq(1,4, by = .25), limits = c(0,4)) +
+  labs(title = "Majors with Lowest Weighted GPAs", x = "Major", y = "Weighted GPA")
+
+```
+
+Gen Ed classes with highest average GPA across different gen ed categories
+
+```{r}
+adv_comp = gen_eds %>% subset(ACP == "ACP") %>% select(Course.Title) %>% unique()
+
+non_western_minority = gen_eds %>% subset(CS == "NW" || CS == "US") %>% select(Course.Title) %>% unique()
+
+western = gen_eds %>% subset(CS == "WCC") %>% select(Course.Title) %>% unique()
+
+humanity_arts = gen_eds %>% subset(HUM == "HP" | HUM == "LA") %>% select(Course.Title) %>% unique()
+
+natural_sciences = gen_eds %>% subset(NAT == "LS" | NAT == "PS") %>% select(Course.Title) %>% unique()
+
+quant_reasoning1 = gen_eds %>% subset(QR == "QR1") %>% select(Course.Title) %>% unique()
+
+quant_reasoning2 = gen_eds %>% subset(QR == "QR2") %>% select(Course.Title) %>% unique()
+
+social_behavioral = gen_eds %>% subset(SBS == "BSC" || SBS == "SS") %>% select(Course.Title) %>% unique()
+
+adv_comp_gpas = computeAvgGpa(adv_comp$Course.Title)
+non_western_minority_gpas = computeAvgGpa(non_western_minority$Course.Title)
+western_gpas = computeAvgGpa(western$Course.Title)
+humanity_arts_gpas = computeAvgGpa(humanity_arts$Course.Title)
+natural_sciences_gpas = computeAvgGpa(natural_sciences$Course.Title)
+quant_reasoning1_gpas = computeAvgGpa(quant_reasoning1$Course.Title)
+quant_reasoning2_gpas = computeAvgGpa(quant_reasoning2$Course.Title)
+social_behavioral_gpas = computeAvgGpa(social_behavioral$Course.Title)
+
+head(adv_comp_gpas, 10)
+print("\n")
+ggplot(head(adv_comp_gpas, 10), aes(x = courses, y = average_gpas)) +
+  geom_bar(stat = "identity", fill = "blue") +
+  scale_y_continuous(breaks = seq(1,4, by = .25)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(title = "Advanced Composition Courses with Highest Average GPAs", x = "Course Titles", y = "Average GPA")
+
+head(non_western_minority_gpas, 10)
+print("\n")
+ggplot(head(non_western_minority_gpas, 10), aes(x = courses, y = average_gpas)) +
+  geom_bar(stat = "identity", fill = "purple") +
+  scale_y_continuous(breaks = seq(1,4, by = .25)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(title = "Non-Western/U.S. Minority Courses with Highest Average GPAs", x = "Course Titles", y = "Average GPA")
+
+head(western_gpas, 10)
+print("\n")
+ggplot(head(western_gpas, 10), aes(x = courses, y = average_gpas)) +
+  geom_bar(stat = "identity", fill = "turquoise") +
+  scale_y_continuous(breaks = seq(1,4, by = .25)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(title = "Western Courses with Highest Average GPAs", x = "Course Titles", y = "Average GPA")
+
+head(humanity_arts_gpas, 10)
+print("\n")
+ggplot(head(humanity_arts_gpas, 10), aes(x = courses, y = average_gpas)) +
+  geom_bar(stat = "identity", fill = "navy blue") +
+  scale_y_continuous(breaks = seq(1,4, by = .25)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(title = "Humanity and Arts Courses with Highest Average GPAs", x = "Course Titles", y = "Average GPAs")
+
+head(natural_sciences_gpas, 10)
+print("\n")
+ggplot(head(natural_sciences_gpas, 10), aes(x = courses, y = average_gpas)) +
+  geom_bar(stat = "identity", fill = "violet") +
+  scale_y_continuous(breaks = seq(1,4, by = .25)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(title = "Natural Science Courses with Highest Average GPAs", x = "Course Titles", y = "Average GPA")
+
+head(quant_reasoning1_gpas, 10)
+print("\n")
+ggplot(head(quant_reasoning1_gpas, 10), aes(x = courses, y = average_gpas)) +
+  geom_bar(stat = "identity", fill = "#117A65") +
+  scale_y_continuous(breaks = seq(1,4, by = .25)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(title = "Quantitative Reasoning 1 courses with Highest Average GPAs", x = "Course Titles", y = "Average GPAs")
+
+head(quant_reasoning2_gpas, 10)
+print("\n")
+ggplot(head(quant_reasoning2_gpas, 10), aes(x = courses, y = average_gpas)) +
+  geom_bar(stat = "identity", fill = "green") +
+  scale_y_continuous(breaks = seq(1,4, by = .25)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(title = "Quantitative Reasoning 2 Courses with Highest Average GPAs", x = "Course Titles", y = "Average GPA")
+
+head(social_behavioral_gpas, 10)
+print("\n")
+ggplot(head(social_behavioral_gpas, 10), aes(x = courses, y = average_gpas)) +
+  geom_bar(stat = "identity", fill = "#5DADE2") +
+  scale_y_continuous(breaks = seq(1,4, by = .25)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(title = "Social/Behavioral Science Courses with Highest Average GPAs", x = "Course Titles", y = "Average GPA")
+
+```
+
+
+
+
+
+
+
